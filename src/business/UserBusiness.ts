@@ -5,6 +5,7 @@ import { SignupInputDTO, SignupOutputDTO } from "../dtos/user/signup.dto"
 import { BadRequestError } from "../errors/BadRequestError"
 import { NotFoundError } from "../errors/NotFoundError"
 import { TokenPayload, USER_ROLES, User } from "../models/User"
+import { HashManager } from "../services/HashManager"
 import { IdGenerator } from "../services/IdGenerator"
 import { TokenManager } from "../services/TokenManager"
 
@@ -12,13 +13,24 @@ export class UserBusiness {
   constructor(
     private userDatabase: UserDatabase,
     private idGenerator: IdGenerator,
-    private tokenManager: TokenManager
+    private tokenManager: TokenManager,
+    private hashManager: HashManager
   ) { }
 
   public getUsers = async (
     input: GetUsersInputDTO
   ): Promise<GetUsersOutputDTO> => {
-    const { q } = input
+    const { q, token } = input
+
+    const payload = this.tokenManager.getPayload(token)
+
+    if(payload === null){
+      throw new BadRequestError("Token inválido")
+    }
+
+    if(payload.role !== USER_ROLES.ADMIN){
+      throw new BadRequestError("Somente admins tem acesso a esses dados.")
+    }
 
     const usersDB = await this.userDatabase.findUsers(q)
 
@@ -55,11 +67,13 @@ export class UserBusiness {
     console.log(this)
     const id = this.idGenerator.generate()
 
+    const hashedPasswordd = await this.hashManager.hash(password)
+
     const newUser = new User(
       id,
       name,
       email,
-      password,
+      hashedPasswordd,
       USER_ROLES.NORMAL, // só é possível criar users com contas normais
       new Date().toISOString()
     )
@@ -96,8 +110,14 @@ export class UserBusiness {
       throw new NotFoundError("'email' não encontrado")
     }
 
-    if (password !== userDB.password) {
-      throw new BadRequestError("'email' ou 'password' incorretos")
+    // if (password !== userDB.password) {
+    //   throw new BadRequestError("'email' ou 'password' incorretos")
+    // }
+
+    const isPasswordCorrect = await this.hashManager.compare(password, userDB.password)
+
+    if(isPasswordCorrect){
+      throw new Error("email ou senha incorretos.")
     }
 
     const user = new User(
